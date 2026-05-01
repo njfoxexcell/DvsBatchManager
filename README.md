@@ -27,7 +27,7 @@ dotnet publish -c Release -r win-x64 --self-contained true \
   -o dist
 ```
 
-The published exe lives at `dist/ExcellDvsBatchManager.exe` and runs on any Windows 10/11 x64 machine without installation.
+The published exe lives at `dist/ExcellDvsBatchManager.exe` and runs on any Windows 10/11 x64 machine without installation. Each `dotnet publish` also writes `dist/ExcellDvsBatchManager.exe.sha256` containing the lowercased SHA-256 in `sha256sum`-compatible format (for MDE allowlisting). The hash is also printed to the build log.
 
 ## Configuration
 

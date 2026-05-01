@@ -27,4 +27,15 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
   </ItemGroup>
+
+  <Target Name="WritePublishHash" AfterTargets="Publish" Condition="Exists('$(PublishDir)$(AssemblyName).exe')">
+    <GetFileHash Files="$(PublishDir)$(AssemblyName).exe" Algorithm="SHA256">
+      <Output TaskParameter="Hash" PropertyName="PublishedExeHash" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_HashLower>$(PublishedExeHash.ToLowerInvariant())</_HashLower>
+    </PropertyGroup>
+    <Exec Command="powershell -NoProfile -Command &quot;[System.IO.File]::WriteAllText('$(PublishDir)$(AssemblyName).exe.sha256', '$(_HashLower)  $(AssemblyName).exe' + [char]10)&quot;" />
+    <Message Importance="high" Text="SHA-256 ($(AssemblyName).exe): $(_HashLower)" />
+  </Target>
 </Project>
