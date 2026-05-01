@@ -60,7 +60,28 @@ ORDER BY BACHNUMB;";
         return rows;
     }
 
-    public async Task SplitBatchAsync(string sourceBatchNumber, string chunkBatchPrefix, int chunkSize, CancellationToken ct = default)
+    public async Task<int> GetMaxChunkNumberAsync(string chunkBatchPrefix, CancellationToken ct = default)
+    {
+        // Highest 3-digit suffix already in use for this prefix. Returns 0 if none.
+        // Lets us pass @StartingChunkNumber = max + 1 so sibling batches that compute
+        // the same prefix (e.g. DVS7-37-0501_12 and DVS7-67-0501_12 both → DVS805012612)
+        // don't collide on the proc's chunk-batch-already-exists guard.
+        const string sql = @"
+SELECT ISNULL(MAX(TRY_CAST(SUBSTRING(RTRIM(BACHNUMB), LEN(@prefix) + 1, 3) AS INT)), 0)
+FROM [EXCEL].[dbo].[SY00500] WITH (NOLOCK)
+WHERE RTRIM(BCHSOURC) = 'Sales Entry'
+  AND LEFT(RTRIM(BACHNUMB), LEN(@prefix)) = @prefix
+  AND LEN(RTRIM(BACHNUMB)) = LEN(@prefix) + 3;";
+
+        await using var conn = new SqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = new SqlCommand(sql, conn) { CommandType = CommandType.Text, CommandTimeout = 30 };
+        cmd.Parameters.Add("@prefix", SqlDbType.VarChar, 15).Value = chunkBatchPrefix;
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return result is int i ? i : 0;
+    }
+
+    public async Task SplitBatchAsync(string sourceBatchNumber, string chunkBatchPrefix, int chunkSize, int startingChunkNumber, CancellationToken ct = default)
     {
         await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(ct);
@@ -69,9 +90,10 @@ ORDER BY BACHNUMB;";
             CommandType = CommandType.StoredProcedure,
             CommandTimeout = 300
         };
-        cmd.Parameters.Add("@SourceBatchNumber", SqlDbType.VarChar, 15).Value = sourceBatchNumber;
-        cmd.Parameters.Add("@ChunkBatchPrefix",  SqlDbType.VarChar, 15).Value = chunkBatchPrefix;
-        cmd.Parameters.Add("@ChunkSize",         SqlDbType.Int).Value         = chunkSize;
+        cmd.Parameters.Add("@SourceBatchNumber",   SqlDbType.VarChar, 15).Value = sourceBatchNumber;
+        cmd.Parameters.Add("@ChunkBatchPrefix",    SqlDbType.VarChar, 15).Value = chunkBatchPrefix;
+        cmd.Parameters.Add("@ChunkSize",           SqlDbType.Int).Value         = chunkSize;
+        cmd.Parameters.Add("@StartingChunkNumber", SqlDbType.Int).Value         = startingChunkNumber;
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

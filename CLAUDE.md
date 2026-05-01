@@ -34,6 +34,13 @@ Examples (today = 2026-04-24):
 - `DVS7-37-0424_13` → `DVS804242613`  (last 2 chars `13`)
 - `DVS7042426001`   → `DVS804242601`  (last 2 chars `01`)
 
+## Sibling-Batch Collision Avoidance
+Two source batches with different middle segments but the same trailing 2 chars on the same date compute the **same** chunk prefix (e.g. `DVS7-37-0501_12` and `DVS7-67-0501_12` both → `DVS805012612`). Without intervention, the second one fails on the proc's "chunk batch already exists" guard.
+
+`MainForm.MarkSelectedCompletedAsync` works around this by querying `BatchRepository.GetMaxChunkNumberAsync(prefix)` for each batch and passing `@StartingChunkNumber = max + 1` to the proc. It re-queries just-in-time inside the loop so two selected batches sharing the same prefix in one run also don't collide. The proc's chunk-numbering allows starting at any positive integer (validated at line 39 of the proc), so e.g. the first sibling claims 001–009 and the second starts at 010. Source attribution stays clear via the chunk's `BCHCOMNT` (`"Chunk N split from <source>"`).
+
+Edge case: if `@StartingChunkNumber + chunk_count` exceeds 999, the proc's `VARCHAR(3)` cast on the chunk number will produce wrong values. Not a real-world concern at current volumes.
+
 ## Stored Procedure Notes
 `dbo.usp_SplitSOPBatchIntoChunks` (in `EXCEL`) signature:
 ```sql

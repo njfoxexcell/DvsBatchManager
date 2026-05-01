@@ -273,33 +273,71 @@ public sealed class MainForm : Form
         var selected = GetSelectedBatchNumbers();
         if (selected.Count == 0) return;
 
-        var preview = selected.Take(10)
-            .Select(b => $"{b}  →  {BuildChunkPrefix(b)}")
-            .ToList();
-
-        var confirm = MessageBox.Show(this,
-            $"Split {selected.Count} batch(es) into chunks of {ChunkSize}?\r\n\r\n" +
-            "Source  →  Chunk Prefix\r\n" +
-            string.Join("\r\n", preview) +
-            (selected.Count > 10 ? $"\r\n… and {selected.Count - 10} more" : ""),
-            "Confirm Mark Completed",
-            MessageBoxButtons.OKCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1);
-        if (confirm != DialogResult.OK) return;
-
-        SetBusy(true, $"Splitting {selected.Count} batch(es)…");
-        var failures = new List<(string Batch, string Error)>();
-        var completed = 0;
-
+        SetBusy(true, "Computing chunk start numbers…");
+        var plan = new List<(string Batch, string Prefix, int StartNumber)>();
         try
         {
             foreach (var batch in selected)
             {
                 var prefix = BuildChunkPrefix(batch);
-                _statusLabel.Text = $"Splitting {batch} → {prefix} ({completed + failures.Count + 1} of {selected.Count})…";
+                var maxExisting = await _repo.GetMaxChunkNumberAsync(prefix);
+                plan.Add((batch, prefix, maxExisting + 1));
+            }
+        }
+        catch (Exception ex)
+        {
+            SetBusy(false);
+            MessageBox.Show(this,
+                $"Failed to compute chunk start numbers:\r\n\r\n{ex.Message}",
+                "Pre-flight Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        var preview = plan.Take(10)
+            .Select(p => $"{p.Batch}  →  {p.Prefix}{p.StartNumber:D3}+")
+            .ToList();
+
+        var confirm = MessageBox.Show(this,
+            $"Split {plan.Count} batch(es) into chunks of {ChunkSize}?\r\n\r\n" +
+            "Source  →  First Chunk Number\r\n" +
+            string.Join("\r\n", preview) +
+            (plan.Count > 10 ? $"\r\n… and {plan.Count - 10} more" : ""),
+            "Confirm Mark Completed",
+            MessageBoxButtons.OKCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1);
+        if (confirm != DialogResult.OK)
+        {
+            SetBusy(false);
+            return;
+        }
+
+        _statusLabel.Text = $"Splitting {plan.Count} batch(es)…";
+        var failures = new List<(string Batch, string Error)>();
+        var completed = 0;
+
+        try
+        {
+            for (var i = 0; i < plan.Count; i++)
+            {
+                var (batch, prefix, plannedStart) = plan[i];
+
+                // Re-query just-in-time so a prior batch in this same run that consumed
+                // chunks under the same prefix doesn't trigger a collision on this one.
+                int startNumber;
+                try
+                {
+                    var max = await _repo.GetMaxChunkNumberAsync(prefix);
+                    startNumber = Math.Max(plannedStart, max + 1);
+                }
+                catch
+                {
+                    startNumber = plannedStart;
+                }
+
+                _statusLabel.Text = $"Splitting {batch} → {prefix}{startNumber:D3}+ ({i + 1} of {plan.Count})…";
                 Application.DoEvents();
                 try
                 {
-                    await _repo.SplitBatchAsync(batch, prefix, ChunkSize);
+                    await _repo.SplitBatchAsync(batch, prefix, ChunkSize, startNumber);
                     completed++;
                 }
                 catch (Exception ex)
